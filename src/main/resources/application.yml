@@ -1,0 +1,51 @@
+# ================================================
+#  TaskForge Application Configuration
+# ================================================
+# This file configures EVERYTHING about your app.
+# Spring Boot reads this file on startup.
+#
+# YAML format: uses indentation (2 spaces) instead of dots
+#   application.yml:    server.port: 8080
+#   application.properties: server.port=8080
+# Both work. YAML is more readable for nested config.
+
+spring:
+  application:
+    name: taskforge-api
+
+  # ---------- DATABASE (H2) ----------
+  # H2 is an in-memory database = lives inside your app's memory
+  # Data disappears when you restart! (Perfect for development)
+  datasource:
+    url: jdbc:h2:mem:taskforgedb        # "mem" = in-memory. "taskforgedb" = database name
+    driver-class-name: org.h2.Driver
+    username: sa                         # default H2 username
+    password:                            # empty password (it's local, don't worry)
+
+  # ---------- JPA / HIBERNATE ----------
+  # JPA = Java Persistence API (the standard)
+  # Hibernate = the implementation that does the actual work
+  jpa:
+    hibernate:
+      ddl-auto: create-drop             # create tables on startup, drop them on shutdown
+      # Options:
+      #   create-drop → create tables, drop on shutdown (for development)
+      #   create      → create tables, don't drop (lose data on schema change)
+      #   update      → update tables if entity changes (good for dev)
+      #   validate    → just check tables match entities (for production)
+      #   none        → do nothing
+    show-sql: true                       # print SQL queries to console (helpful for learning!)
+    properties:
+      hibernate:
+        format_sql: true                 # make the SQL readable (indented, not one long line)
+
+  # ---------- H2 CONSOLE ----------
+  # This gives you a web-based database viewer at http://localhost:8080/h2-console
+  h2:
+    console:
+      enabled: true                      # turn on the H2 web console
+      path: /h2-console                  # URL path to access it
+
+# ---------- SERVER ----------
+server:
+  port: 8080                             # your app runs on http://localhost:8080
