@@ -92,6 +92,21 @@
     <!-- ========== BUILD CONFIGURATION ========== -->
     <build>
         <plugins>
+            <!-- Maven Compiler Plugin — configures Lombok annotation processing -->
+            <!-- Lombok generates code at COMPILE TIME, so we need to tell Maven's -->
+            <!-- compiler about it. Without this, @Getter, @Setter, @Builder won't work! -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
             <!-- This plugin lets us run: mvn spring-boot:run -->
             <!-- It also packages the app into a single JAR file -->
             <plugin>
