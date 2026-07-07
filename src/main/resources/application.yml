@@ -49,3 +49,6 @@ spring:
 # ---------- SERVER ----------
 server:
   port: 8080                             # your app runs on http://localhost:8080
+  error:
+    include-stacktrace: never            # NEVER expose stack traces in error responses
+    include-message: always              # Include our custom error messages

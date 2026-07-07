@@ -4,6 +4,7 @@ import com.taskforge.dto.request.TaskRequest;
 import com.taskforge.dto.response.TaskResponse;
 import com.taskforge.service.TaskService;
 
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -65,7 +66,10 @@ public class TaskController {
      * POST /api/tasks → Create a new task
      */
     @PostMapping
-    public ResponseEntity<TaskResponse> createTask(@RequestBody TaskRequest request) {
+    public ResponseEntity<TaskResponse> createTask(@Valid @RequestBody TaskRequest request) {
+        // @Valid tells Spring: "Validate this object using the annotations on TaskRequest"
+        // If validation fails, Spring throws MethodArgumentNotValidException
+        // BEFORE this method even runs. Our GlobalExceptionHandler catches it.
         TaskResponse created = taskService.createTask(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
     }
@@ -76,7 +80,7 @@ public class TaskController {
     @PutMapping("/{id}")
     public ResponseEntity<TaskResponse> updateTask(
             @PathVariable Long id,
-            @RequestBody TaskRequest request
+            @Valid @RequestBody TaskRequest request
     ) {
         return ResponseEntity.ok(taskService.updateTask(id, request));
     }
