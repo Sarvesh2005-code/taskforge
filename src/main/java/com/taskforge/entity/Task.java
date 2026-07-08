@@ -9,94 +9,28 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
+import java.util.HashSet;
+import java.util.Set;
 
-/**
- * WHAT IS AN ENTITY?
- * ===================
- * An Entity is a Java class that maps to a DATABASE TABLE.
- * Each INSTANCE of this class = one ROW in the table.
- * Each FIELD = one COLUMN in the table.
- *
- *   Java World              Database World
- *   ──────────              ──────────────
- *   Task class      →      "tasks" table
- *   Task object     →      one row in the table
- *   String title    →      "title" column (VARCHAR)
- *   Long id         →      "id" column (BIGINT)
- *
- * This mapping is done by JPA (Java Persistence API) and the actual
- * work is performed by Hibernate (the JPA implementation).
- *
- * You write Java. Hibernate writes SQL for you.
- *
- * ───────────────────────────────────────────────────────
- * LOMBOK ANNOTATIONS (reduce boilerplate code):
- * ───────────────────────────────────────────────────────
- * @Getter           → generates getTitle(), getDescription(), etc.
- * @Setter           → generates setTitle(), setDescription(), etc.
- * @NoArgsConstructor → generates Task() { } (empty constructor — JPA requires this!)
- * @AllArgsConstructor → generates Task(id, title, desc, ...) (all fields constructor)
- * @Builder          → generates Task.builder().title("...").build() (builder pattern)
- *
- * WITHOUT Lombok, you'd have to write ~80 lines of getters, setters, constructors.
- * WITH Lombok, you write 5 annotations.
- */
-@Entity                          // "This class maps to a database table"
-@Table(name = "tasks")           // The table will be called "tasks" (optional: defaults to class name)
-@Getter                          // Auto-generate all getter methods
-@Setter                          // Auto-generate all setter methods
-@NoArgsConstructor               // Auto-generate empty constructor (JPA REQUIRES this)
-@AllArgsConstructor              // Auto-generate constructor with all fields
-@Builder                         // Auto-generate builder pattern (Task.builder().title("x").build())
+@Entity
+@Table(name = "tasks")
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class Task {
 
-    /**
-     * PRIMARY KEY — Every database table needs a unique identifier for each row.
-     *
-     * @Id → "This field is the primary key"
-     * @GeneratedValue(strategy = GenerationType.IDENTITY)
-     *   → "Let the DATABASE auto-generate this value (1, 2, 3, 4...)"
-     *
-     * GenerationType options:
-     *   IDENTITY → Database auto-increments (most common, works with H2, MySQL, Postgres)
-     *   SEQUENCE → Uses a database sequence (preferred for Postgres in production)
-     *   AUTO     → Let Hibernate decide (not recommended — behavior varies)
-     *   TABLE    → Uses a separate table to track IDs (rarely used)
-     */
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /**
-     * @Column lets you customize the database column.
-     *
-     * nullable = false → this column CANNOT be null (NOT NULL constraint)
-     * length = 200     → maximum 200 characters (VARCHAR(200))
-     *
-     * If you don't use @Column, Hibernate uses defaults:
-     *   - Column name = field name
-     *   - nullable = true
-     *   - length = 255
-     */
     @Column(nullable = false, length = 200)
     private String title;
 
-    /**
-     * columnDefinition = "TEXT" → use TEXT type instead of VARCHAR
-     * TEXT can store much longer strings than VARCHAR(255)
-     * Good for descriptions, notes, or any free-form content.
-     */
     @Column(columnDefinition = "TEXT")
     private String description;
 
-    /**
-     * @Enumerated tells Hibernate HOW to store an enum in the database.
-     *
-     * EnumType.STRING  → stores "TODO", "IN_PROGRESS", "DONE" (readable!)
-     * EnumType.ORDINAL → stores 0, 1, 2 (BAD! If you reorder the enum, data breaks)
-     *
-     * ALWAYS use EnumType.STRING. This is an interview question!
-     */
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private TaskStatus status;
@@ -105,21 +39,85 @@ public class Task {
     @Column(nullable = false)
     private TaskPriority priority;
 
+    // =================================================================
+    // RELATIONSHIP 1: Many Tasks → One User (MANY-TO-ONE)
+    // =================================================================
     /**
-     * @CreationTimestamp → Hibernate automatically sets this to NOW
-     *                      when the entity is FIRST saved to the database.
-     *                      You never need to set this manually!
+     * @ManyToOne — "Many tasks can belong to ONE user"
      *
-     * updatable = false → this column can't be changed after insertion
+     * This is the OWNING SIDE of the User ↔ Task relationship.
+     * "Owning side" means THIS table has the foreign key column.
+     *
+     * Database result:
+     *   tasks table: ... | assignee_id (FK → users.id)
+     *
+     * FetchType.LAZY vs EAGER:
+     *   LAZY  → Load the user ONLY when you call task.getAssignee()
+     *           (saves memory — don't load data you might not need)
+     *   EAGER → Load the user IMMEDIATELY when you load the task
+     *           (convenient but can cause performance issues)
+     *
+     *   ALWAYS use LAZY for @ManyToOne. This is an interview question!
+     *   Default: @ManyToOne is EAGER by default, so we explicitly set LAZY.
+     *
+     * @JoinColumn(name = "assignee_id")
+     *   → The foreign key column in the tasks table will be called "assignee_id"
+     *   → It references users.id
+     *
+     * nullable: an assignee is optional — tasks can be unassigned.
      */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "assignee_id")
+    private User assignee;
+
+    // =================================================================
+    // RELATIONSHIP 2: Many Tasks ↔ Many Labels (MANY-TO-MANY)
+    // =================================================================
+    /**
+     * @ManyToMany — "A task can have many labels, a label can be on many tasks"
+     *
+     * This is the OWNING SIDE (it has @JoinTable).
+     *
+     * ManyToMany requires a JOIN TABLE — a separate table that links the two:
+     *
+     *   tasks table:       id | title
+     *                      1  | Fix login
+     *                      2  | Add tests
+     *
+     *   labels table:      id | name
+     *                      1  | bug
+     *                      2  | frontend
+     *
+     *   task_labels table:  task_id | label_id   ← JOIN TABLE
+     *                       1      | 1           ← Task 1 has "bug"
+     *                       1      | 2           ← Task 1 has "frontend"
+     *                       2      | 1           ← Task 2 has "bug"
+     *
+     * @JoinTable defines this join table:
+     *   name             → table name: "task_labels"
+     *   joinColumns      → FK pointing to THIS entity: task_id
+     *   inverseJoinColumns → FK pointing to the OTHER entity: label_id
+     *
+     * We use Set (not List) because:
+     *   1. No duplicate labels on a task
+     *   2. Hibernate handles Set better for ManyToMany
+     *
+     * @Builder.Default → tells Lombok's @Builder to use this default value
+     *   (new HashSet<>()) instead of null when building.
+     */
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+            name = "task_labels",
+            joinColumns = @JoinColumn(name = "task_id"),
+            inverseJoinColumns = @JoinColumn(name = "label_id")
+    )
+    @Builder.Default
+    private Set<Label> labels = new HashSet<>();
+
     @CreationTimestamp
     @Column(updatable = false)
     private LocalDateTime createdAt;
 
-    /**
-     * @UpdateTimestamp → Hibernate automatically updates this to NOW
-     *                    every time the entity is modified and saved.
-     */
     @UpdateTimestamp
     private LocalDateTime updatedAt;
 }

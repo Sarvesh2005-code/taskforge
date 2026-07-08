@@ -1,211 +1,152 @@
 package com.taskforge.service;
 
 import com.taskforge.dto.request.TaskRequest;
+import com.taskforge.dto.response.LabelResponse;
 import com.taskforge.dto.response.TaskResponse;
+import com.taskforge.dto.response.UserSummary;
+import com.taskforge.entity.Label;
 import com.taskforge.entity.Task;
+import com.taskforge.entity.User;
 import com.taskforge.enums.TaskPriority;
 import com.taskforge.enums.TaskStatus;
 import com.taskforge.exception.ResourceNotFoundException;
+import com.taskforge.repository.LabelRepository;
 import com.taskforge.repository.TaskRepository;
+import com.taskforge.repository.UserRepository;
 import org.springframework.stereotype.Service;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
- * THE SERVICE LAYER — Where business logic lives.
- * ================================================
+ * Updated TaskService — now handles User (assignee) and Label relationships.
  *
- * WHY DO WE NEED A SERVICE?
- * In Module 2, our Controller did EVERYTHING:
- *   - Handled HTTP requests
- *   - Contained business logic
- *   - Stored/retrieved data
+ * Notice how the service now depends on THREE repositories:
+ *   - TaskRepository   → to manage tasks
+ *   - UserRepository   → to look up users by ID (for assigning)
+ *   - LabelRepository  → to look up labels by ID (for tagging)
  *
- * That's bad because:
- *   1. The Controller becomes huge and unmaintainable
- *   2. Business logic can't be reused by other controllers
- *   3. Testing is harder (you have to test HTTP + logic together)
- *
- * The 3-Layer Architecture:
- * ┌──────────────────┐
- * │   Controller     │  ← Handles HTTP (request/response). Thin!
- * │   (Web Layer)    │     Only converts DTOs and calls Service.
- * ├──────────────────┤
- * │   Service        │  ← Business logic lives HERE.
- * │   (Business)     │     Validates, transforms, coordinates.
- * ├──────────────────┤
- * │   Repository     │  ← Database access. Just CRUD.
- * │   (Data Layer)   │     No business logic here.
- * └──────────────────┘
- *
- * @Service → tells Spring: "Create a Bean of this class and manage it."
- *           It's semantically the same as @Component, but signals
- *           "this is a service layer class" to other developers.
- *
- * DEPENDENCY INJECTION IN ACTION:
- * ──────────────────────────────
- * Look at the constructor below. It takes TaskRepository as a parameter.
- * Spring sees this and automatically provides the TaskRepository bean.
- * You don't write: new TaskService(new TaskRepository())
- * Spring does it for you. That's Dependency Injection!
- *
- * When there's only ONE constructor, Spring auto-injects without @Autowired.
+ * This is NORMAL in real applications. Services often need
+ * multiple repositories to coordinate operations.
  */
 @Service
 public class TaskService {
 
     private final TaskRepository taskRepository;
+    private final UserRepository userRepository;
+    private final LabelRepository labelRepository;
 
-    // Constructor Injection — the RECOMMENDED way to inject dependencies.
-    // Spring automatically provides the TaskRepository bean.
-    //
-    // Why "final"?
-    //   - It makes the field immutable (can't be changed after construction)
-    //   - Guarantees the repository is never null
-    //   - This is a best practice for dependency injection
-    public TaskService(TaskRepository taskRepository) {
+    // Spring injects all three repositories automatically
+    public TaskService(TaskRepository taskRepository,
+                       UserRepository userRepository,
+                       LabelRepository labelRepository) {
         this.taskRepository = taskRepository;
+        this.userRepository = userRepository;
+        this.labelRepository = labelRepository;
     }
 
-    // ====================================================================
-    // GET ALL TASKS
-    // ====================================================================
-    /**
-     * Fetches all tasks from the database and converts them to DTOs.
-     *
-     * Flow: Repository.findAll() → List<Task> → convert each → List<TaskResponse>
-     *
-     * .stream()   → converts the List to a Stream (for functional operations)
-     * .map(...)   → transforms each Task entity → TaskResponse DTO
-     * .toList()   → collects the results back into a List
-     */
     public List<TaskResponse> getAllTasks() {
-        return taskRepository.findAll()
-                .stream()
-                .map(this::mapToResponse)    // Convert each Task → TaskResponse
+        return taskRepository.findAll().stream()
+                .map(this::mapToResponse)
                 .toList();
     }
 
-    // ====================================================================
-    // GET TASK BY ID
-    // ====================================================================
-    /**
-     * Fetches a single task by its ID.
-     *
-     * taskRepository.findById(id) returns Optional<Task>:
-     *   - If task exists → Optional containing the task
-     *   - If not found   → Optional.empty()
-     *
-     * .orElseThrow() → if empty, throw our custom exception
-     *                   which will later be caught and converted to HTTP 404
-     */
     public TaskResponse getTaskById(Long id) {
         Task task = taskRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Task not found with id: " + id));
-
         return mapToResponse(task);
     }
 
-    // ====================================================================
-    // CREATE TASK
-    // ====================================================================
-    /**
-     * Creates a new task in the database.
-     *
-     * Flow:
-     *   1. Convert TaskRequest DTO → Task entity
-     *   2. Set defaults for null fields
-     *   3. Save to database (taskRepository.save())
-     *   4. Convert saved Task → TaskResponse DTO and return
-     *
-     * Note: We DON'T set id, createdAt, or updatedAt.
-     *   - id        → auto-generated by @GeneratedValue
-     *   - createdAt → auto-set by @CreationTimestamp
-     *   - updatedAt → auto-set by @UpdateTimestamp
-     */
     public TaskResponse createTask(TaskRequest request) {
-        Task task = Task.builder()                        // Using the Builder pattern from Lombok!
+        Task task = Task.builder()
                 .title(request.title())
                 .description(request.description())
                 .status(request.status() != null ? request.status() : TaskStatus.TODO)
                 .priority(request.priority() != null ? request.priority() : TaskPriority.MEDIUM)
                 .build();
 
-        Task savedTask = taskRepository.save(task);       // save() does INSERT INTO tasks (...)
-        return mapToResponse(savedTask);
+        // Set the assignee if provided
+        if (request.assigneeId() != null) {
+            User user = userRepository.findById(request.assigneeId())
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "User not found with id: " + request.assigneeId()));
+            task.setAssignee(user);
+        }
+
+        // Set labels if provided
+        if (request.labelIds() != null && !request.labelIds().isEmpty()) {
+            Set<Label> labels = new HashSet<>(labelRepository.findAllById(request.labelIds()));
+            if (labels.size() != request.labelIds().size()) {
+                throw new ResourceNotFoundException("One or more labels not found");
+            }
+            task.setLabels(labels);
+        }
+
+        return mapToResponse(taskRepository.save(task));
     }
 
-    // ====================================================================
-    // UPDATE TASK
-    // ====================================================================
-    /**
-     * Updates an existing task.
-     *
-     * Flow:
-     *   1. Find the existing task (throw 404 if not found)
-     *   2. Update its fields from the request
-     *   3. Save again (Hibernate detects it's an UPDATE, not INSERT,
-     *      because the entity already has an ID)
-     *   4. Return the updated task as a DTO
-     */
     public TaskResponse updateTask(Long id, TaskRequest request) {
-        Task existingTask = taskRepository.findById(id)
+        Task task = taskRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Task not found with id: " + id));
 
-        // Update the fields
-        existingTask.setTitle(request.title());
-        existingTask.setDescription(request.description());
-        existingTask.setStatus(request.status());
-        existingTask.setPriority(request.priority());
-        // Note: createdAt stays unchanged (we never set it)
-        //       updatedAt is automatically updated by @UpdateTimestamp
+        task.setTitle(request.title());
+        task.setDescription(request.description());
+        task.setStatus(request.status());
+        task.setPriority(request.priority());
 
-        Task updatedTask = taskRepository.save(existingTask);  // save() does UPDATE tasks SET ...
-        return mapToResponse(updatedTask);
+        // Update assignee
+        if (request.assigneeId() != null) {
+            User user = userRepository.findById(request.assigneeId())
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "User not found with id: " + request.assigneeId()));
+            task.setAssignee(user);
+        } else {
+            task.setAssignee(null);  // Unassign
+        }
+
+        // Update labels
+        if (request.labelIds() != null) {
+            Set<Label> labels = new HashSet<>(labelRepository.findAllById(request.labelIds()));
+            task.setLabels(labels);
+        }
+
+        return mapToResponse(taskRepository.save(task));
     }
 
-    // ====================================================================
-    // DELETE TASK
-    // ====================================================================
-    /**
-     * Deletes a task by ID.
-     *
-     * We first check if the task exists. If not, throw 404.
-     * Then we delete it using deleteById().
-     *
-     * Why check first instead of just calling deleteById()?
-     *   deleteById() silently does nothing if the ID doesn't exist.
-     *   We WANT to tell the client "that task doesn't exist" (404).
-     */
     public void deleteTask(Long id) {
         if (!taskRepository.existsById(id)) {
             throw new ResourceNotFoundException("Task not found with id: " + id);
         }
-        taskRepository.deleteById(id);  // DELETE FROM tasks WHERE id = ?
+        taskRepository.deleteById(id);
     }
 
-    // ====================================================================
-    // HELPER: Convert Task Entity → TaskResponse DTO
-    // ====================================================================
     /**
-     * This is a MAPPER method. It converts the internal database object (Entity)
-     * to the external API object (DTO).
-     *
-     * Why not return the Entity directly?
-     *   1. Security — Entity might have fields you don't want to expose
-     *   2. Decoupling — if you change the Entity, the API response doesn't break
-     *   3. Flexibility — response shape can differ from database shape
-     *
-     * In larger projects, you'd use a library like MapStruct to auto-generate
-     * these mapper methods. For learning, we write them manually.
+     * MAPPER — now maps relationships too.
+     * Converts User → UserSummary, Set<Label> → Set<LabelResponse>
      */
     private TaskResponse mapToResponse(Task task) {
+        // Map assignee (User → UserSummary) — can be null
+        UserSummary assignee = null;
+        if (task.getAssignee() != null) {
+            User user = task.getAssignee();
+            assignee = new UserSummary(user.getId(), user.getUsername(), user.getEmail());
+        }
+
+        // Map labels (Set<Label> → Set<LabelResponse>)
+        Set<LabelResponse> labels = task.getLabels().stream()
+                .map(label -> new LabelResponse(label.getId(), label.getName(), label.getColor()))
+                .collect(Collectors.toSet());
+
         return new TaskResponse(
                 task.getId(),
                 task.getTitle(),
                 task.getDescription(),
                 task.getStatus(),
                 task.getPriority(),
+                assignee,
+                labels,
                 task.getCreatedAt(),
                 task.getUpdatedAt()
         );
